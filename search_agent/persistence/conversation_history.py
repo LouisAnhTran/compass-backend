@@ -33,10 +33,32 @@ async def owner_of(thread_id: str) -> int | None:
     return row[0] if row else None
 
 
+def _serialize_messages(messages: list) -> list[dict]:
+    """LangChain message objects are not JSON-serialisable, and json.dumps with
+    default=str silently stores their repr:
+
+        "content='show me …' additional_kwargs={} response_metadata={} id='…'"
+
+    which the frontend then renders verbatim, with no role to distinguish a
+    user turn from an assistant one. Normalise to the same {role, content}
+    shape FastAPI produces for the /search-agent response, so both endpoints
+    return identical message objects.
+    """
+    out = []
+    for m in messages:
+        if isinstance(m, dict):
+            out.append({"role": m.get("role") or m.get("type"), "content": m.get("content", "")})
+            continue
+        # LangChain: .type is "human" | "ai" | "tool".
+        role = getattr(m, "type", None) or getattr(m, "role", None)
+        out.append({"role": role, "content": getattr(m, "content", str(m))})
+    return out
+
+
 async def project(thread_id: str, user_id: int, snapshot) -> None:
     awaiting = snapshot.interrupts[0].value if snapshot.next else None
     status = "awaiting_input" if snapshot.next else "completed"
-    messages = snapshot.values.get("messages", [])
+    messages = _serialize_messages(snapshot.values.get("messages", []))
 
     async with _pool.connection() as conn:
         await conn.execute(
@@ -56,7 +78,7 @@ async def project(thread_id: str, user_id: int, snapshot) -> None:
                 thread_id,
                 user_id,
                 _derive_title(messages),
-                json.dumps(messages, default=str),
+                json.dumps(messages),
                 json.dumps(awaiting) if awaiting else None,
                 status,
             ),
@@ -106,9 +128,9 @@ async def get(thread_id: str) -> dict | None:
     }
 
 
-def _derive_title(messages: list) -> str | None:
+def _derive_title(messages: list[dict]) -> str | None:
+    """First human turn — the assistant's are just "Model: …" confirmations."""
     for m in messages:
-        content = m.get("content") if isinstance(m, dict) else getattr(m, "content", None)
-        if content:
-            return str(content)[:80]
-    return None
+        if m.get("role") in ("human", "user") and m.get("content"):
+            return str(m["content"])[:80]
+    return next((str(m["content"])[:80] for m in messages if m.get("content")), None)

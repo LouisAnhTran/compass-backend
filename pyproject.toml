@@ -1,0 +1,25 @@
+[project]
+name = "compass-backend"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic-settings>=2.6",
+    "httpx>=0.28",
+    "langgraph>=1.0.3",
+    # Separate package — does NOT come with langgraph. Pin it: local and
+    # deployed share one database, so a version skew means one side migrates
+    # the checkpoint schema out from under the other.
+    "langgraph-checkpoint-postgres>=2.0.0",
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+    "langchain-anthropic>=1.1.0",
+    "rapidfuzz>=3.10",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24"]
+
+[tool.setuptools.packages.find]
+include = ["search_agent*"]

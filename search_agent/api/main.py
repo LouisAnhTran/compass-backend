@@ -5,6 +5,7 @@ setup(). conversation_history is applied out-of-band by `make migrate` —
 see persistence/checkpointer.py for the reasoning.
 """
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,12 +15,21 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from search_agent.api.routes import router
 from search_agent.config import settings
 from search_agent.graph.builder import build_graph
+from search_agent.observability import configure_tracing
 from search_agent.persistence import conversation_history as history
 from search_agent.persistence.checkpointer import setup_checkpointer
 
 
+# uvicorn configures its own loggers but not the application's, so without
+# this the tracing diagnostic in configure_tracing() never reaches stdout —
+# which would defeat its purpose.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(name)s: %(message)s")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_tracing()
+
     # from_conn_string() returns a CONTEXT MANAGER, not a saver — binding it
     # directly (as the original spec draft did) yields an unusable object.
     async with AsyncPostgresSaver.from_conn_string(settings.postgres_url) as checkpointer:

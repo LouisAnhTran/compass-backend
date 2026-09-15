@@ -11,7 +11,17 @@ from psycopg_pool import AsyncConnectionPool
 
 from search_agent.config import settings
 
+# open=False so constructing the module does not perform I/O at import time.
+# The app lifespan opens it; without that every query raises PoolClosed.
 _pool = AsyncConnectionPool(settings.postgres_url, open=False)
+
+
+async def open_pool() -> None:
+    await _pool.open(wait=True, timeout=30)
+
+
+async def close_pool() -> None:
+    await _pool.close()
 
 
 async def owner_of(thread_id: str) -> int | None:

@@ -14,6 +14,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from search_agent.api.routes import router
 from search_agent.config import settings
 from search_agent.graph.builder import build_graph
+from search_agent.persistence import conversation_history as history
 from search_agent.persistence.checkpointer import setup_checkpointer
 
 
@@ -23,8 +24,15 @@ async def lifespan(app: FastAPI):
     # directly (as the original spec draft did) yields an unusable object.
     async with AsyncPostgresSaver.from_conn_string(settings.postgres_url) as checkpointer:
         await setup_checkpointer(checkpointer)
+        # The projection pool is constructed with open=False so importing the
+        # module does no I/O; it has to be opened here or every query raises
+        # PoolClosed.
+        await history.open_pool()
         app.state.graph = build_graph(checkpointer)
-        yield
+        try:
+            yield
+        finally:
+            await history.close_pool()
 
 
 app = FastAPI(title="Compass", lifespan=lifespan)

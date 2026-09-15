@@ -165,3 +165,50 @@ async def test_numeric_queue_id_scores_exact(mocked, monkeypatch):
     payload = (await g.aget_state(c)).interrupts[0].value
     match = payload["items"][0]["matches"][0]
     assert match["id"] == 2321 and match["score"] == 1.0
+
+
+# ── Regression tests for bugs only real Staple data exposed ──────────────────
+
+def test_case_difference_does_not_break_token_sort():
+    """token_sort_ratio sorts tokens before comparing and that sort is
+    case-sensitive, so "Singapore e-invoice" and "Singapore E-invoice" sorted
+    to different orders and the exact match scored 0.47."""
+    from search_agent.graph.nodes.rank import rank_matches
+
+    group = rank_matches(
+        "Singapore e-invoice", [{"id": 1283, "name": "Singapore E-invoice"}], "model"
+    )
+    assert group["sub_reason"] == "found_matches"
+    assert group["matches"][0]["score"] == 1.0
+
+
+def test_partial_member_name_matches():
+    """Users give a first name; candidates are full names. token_sort_ratio
+    alone scores "Yashdeep" against "Yashdeep Kumar" at 0.73 — under threshold."""
+    from search_agent.graph.nodes.rank import rank_matches
+
+    members = [{"id": 859, "firstName": "Yashdeep", "lastName": "Kumar", "email": "y@staple.io"}]
+    assert rank_matches("Yashdeep", members, "member")["matches"][0]["score"] == 1.0
+    # Email fragments are in scope per the extraction contract.
+    assert rank_matches("y@staple.io", members, "member")["matches"][0]["score"] == 1.0
+
+
+def test_html_entities_are_decoded():
+    """Staple returns multiply-escaped names; raw they break display and
+    matching alike."""
+    from search_agent.graph.nodes.rank import display_name
+
+    assert display_name({"name": "Fusable&amp;amp;amp;#39;s"}, "queue") == "Fusable's"
+    # Real data has trailing spaces in firstName.
+    assert display_name({"firstName": "Aman ", "lastName": "Verma"}, "member") == "Aman Verma"
+
+
+def test_shortlist_truncation_is_disclosed():
+    """16 queues are literally named "Invoice"; a silent cap of 10 would imply
+    those were the only candidates."""
+    from search_agent.graph.nodes.rank import rank_matches
+
+    queues = [{"id": i, "name": "Invoice"} for i in range(30)]
+    group = rank_matches("Invoice", queues, "queue")
+    assert len(group["matches"]) == 10
+    assert group["total_above_threshold"] == 30
